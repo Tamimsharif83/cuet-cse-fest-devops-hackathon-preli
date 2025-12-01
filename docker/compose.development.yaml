@@ -1,6 +1,97 @@
-# services:
-  # backend:
+services:
+  # MongoDB Database
+  mongo:
+    image: mongo:7.0-jammy
+    container_name: ecommerce-mongo-dev
+    restart: unless-stopped
+    networks:
+      - ecommerce-network
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE}
+    volumes:
+      - mongo-data:/data/db
+      - mongo-config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    # Note: Port 27017 is NOT exposed to host in development for security
 
-  # gateway:
+  # Backend Service
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.dev
+    container_name: ecommerce-backend-dev
+    restart: unless-stopped
+    networks:
+      - ecommerce-network
+    environment:
+      NODE_ENV: development
+      BACKEND_PORT: ${BACKEND_PORT}
+      MONGO_URI: ${MONGO_URI}
+      MONGO_DATABASE: ${MONGO_DATABASE}
+    volumes:
+      - ../backend/src:/app/src:ro
+      - backend-node-modules:/app/node_modules
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3847/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    # Note: Port 3847 is NOT exposed to host for security
 
-  # mongo:
+  # Gateway Service (API Gateway)
+  gateway:
+    build:
+      context: ../gateway
+      dockerfile: Dockerfile.dev
+    container_name: ecommerce-gateway-dev
+    restart: unless-stopped
+    networks:
+      - ecommerce-network
+    ports:
+      - "${GATEWAY_PORT}:5921"
+    environment:
+      NODE_ENV: development
+      GATEWAY_PORT: ${GATEWAY_PORT}
+      BACKEND_URL: http://backend:3847
+    volumes:
+      - ../gateway/src:/app/src:ro
+      - gateway-node-modules:/app/node_modules
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:5921/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  ecommerce-network:
+    driver: bridge
+    name: ecommerce-network-dev
+
+volumes:
+  mongo-data:
+    name: ecommerce-mongo-data-dev
+    driver: local
+  mongo-config:
+    name: ecommerce-mongo-config-dev
+    driver: local
+  backend-node-modules:
+    name: ecommerce-backend-node-modules-dev
+    driver: local
+  gateway-node-modules:
+    name: ecommerce-gateway-node-modules-dev
+    driver: local
